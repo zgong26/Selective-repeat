@@ -135,6 +135,8 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	for(char c: payload.toCharArray())
     		checkSum += (int) c;
     	Packet newPack = new Packet(seqNoA, ackNoA, checkSum, payload);
+    	
+    	startTimer(0, RxmtInterval);
     	toLayer3(0, newPack);
     	storedMsg = message;//store the msg in case of resends. Only for stop and wait purpose
     }
@@ -145,6 +147,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // sent from the B-side.
     protected void aInput(Packet packet)
     {
+    	stopTimer(0);
     	//check if checksum is correct
     	int seq = packet.getSeqnum();
     	int ack = packet.getAcknum();
@@ -168,7 +171,9 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // for how the timer is started and stopped. 
     protected void aTimerInterrupt()
     {
-    	
+    	System.out.println("检查点");
+    	stopTimer(0);
+    	aOutput(storedMsg);//resend
     }
     
     // This routine will be called once, before any of your other A-side 
