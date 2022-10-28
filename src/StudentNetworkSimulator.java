@@ -97,7 +97,14 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // these variables to send messages error free!  They can only hold
     // state information for A or B.
     // Also add any necessary methods (e.g. checksum of a String)
-
+    private int seqNoA;
+    private int ackNoA;
+    private int checkSum;
+    private int seqNoB;
+    private int ackNoB;
+    private Message storedMsg;//Should be modified to a queue to fit into a window!! This is only for stop and wait purpose 
+    private Packet storedPacketB;// same as storedMsg
+    
     // This is the constructor.  Don't touch!
     public StudentNetworkSimulator(int numMessages,
                                    double loss,
@@ -121,7 +128,15 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // the receiving upper layer.
     protected void aOutput(Message message)
     {
-
+    	//create a packet including seq, message, etc and call toLayer3()
+    	//calculate checksum by adding sequence number, ack number and each char of payload together
+    	checkSum = seqNoA + ackNoA;
+    	String payload = message.getData();
+    	for(char c: payload.toCharArray())
+    		checkSum += (int) c;
+    	Packet newPack = new Packet(seqNoA, ackNoA, checkSum, payload);
+    	toLayer3(0, newPack);
+    	storedMsg = message;//store the msg in case of resends. Only for stop and wait purpose
     }
     
     // This routine will be called whenever a packet sent from the B-side 
@@ -130,7 +145,21 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // sent from the B-side.
     protected void aInput(Packet packet)
     {
-
+    	//check if checksum is correct
+    	int seq = packet.getSeqnum();
+    	int ack = packet.getAcknum();
+    	int calculatedCheck = seq + ack;
+    	String payload = packet.getPayload();
+    	for(char c: payload.toCharArray())//Is this necessary since the payload received from B is empty?
+    		calculatedCheck += (int) c;
+    	//if corrupted or duplicated ack:
+    	if(calculatedCheck != packet.getChecksum() || ack != ackNoA)
+    		aOutput(storedMsg);//resend
+    	else {
+    		//in this successful case, we change seq and ack
+    		seqNoA++;
+    		ackNoA++;
+    	}
     }
     
     // This routine will be called when A's timer expires (thus generating a 
@@ -139,7 +168,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // for how the timer is started and stopped. 
     protected void aTimerInterrupt()
     {
-
+    	
     }
     
     // This routine will be called once, before any of your other A-side 
@@ -148,7 +177,8 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // of entity A).
     protected void aInit()
     {
-
+    	seqNoA = FirstSeqNo;
+    	ackNoA = seqNoA;
     }
     
     // This routine will be called whenever a packet sent from the B-side 
@@ -157,7 +187,26 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // sent from the A-side.
     protected void bInput(Packet packet)
     {
-
+    	//check if checksum is correct
+    	int seq = packet.getSeqnum();
+    	int ack = packet.getAcknum();
+    	int calculatedCheck = seq + ack;
+    	String payload = packet.getPayload();
+    	for(char c: payload.toCharArray())
+    		calculatedCheck += (int) c;
+    	//if corrupted or repeated packet:
+    	if(calculatedCheck != packet.getChecksum() || ackNoB == ack) {
+    		toLayer3(1, storedPacketB);
+    	}
+    	else {
+    		checkSum = seq + ack;
+    		seqNoB = seq;
+    		ackNoB = ack;
+    		Packet newPack = new Packet(seqNoB, ackNoB, checkSum);
+    		toLayer5(payload);
+    		toLayer3(1, newPack);
+    		storedPacketB = newPack;
+    	}
     }
     
     // This routine will be called once, before any of your other B-side 
@@ -166,7 +215,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // of entity B).
     protected void bInit()
     {
-
+    	storedPacketB = new Packet(FirstSeqNo, FirstSeqNo, FirstSeqNo + FirstSeqNo);
     }
 
     // Use to print final statistics
