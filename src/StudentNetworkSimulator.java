@@ -100,10 +100,11 @@ public class StudentNetworkSimulator extends NetworkSimulator
     private int seqNoA;
     private int ackNoA;
     private int checkSum;
-    private int seqNoB;
-    private int ackNoB;
-    private Message storedMsg;//Should be modified to a queue to fit into a window!! This is only for stop and wait purpose 
-    private Packet storedPacketB;// same as storedMsg
+    private int lastSeq;//last seq received by layer5 on receiver side
+    //array to track each pack sent time for selective
+    private Queue<Packet> senderBuffer;//sender senderBuffer to store out-of-window packets
+    private Queue<Packet> senderWindow;//used to keep track of packets in the sender window
+    private PriorityQueue<Packet> receiverBuffer;//buffer on receiver side
     
     // This is the constructor.  Don't touch!
     public StudentNetworkSimulator(int numMessages,
@@ -121,24 +122,31 @@ public class StudentNetworkSimulator extends NetworkSimulator
 	RxmtInterval = delay;
     }
 
-    
     // This routine will be called whenever the upper layer at the sender [A]
     // has a message to send.  It is the job of your protocol to insure that
     // the data in such a message is delivered in-order, and correctly, to
     // the receiving upper layer.
     protected void aOutput(Message message)
     {
-    	//create a packet including seq, message, etc and call toLayer3()
+    	//create a packet including seq, message, etc and put it into the queue
     	//calculate checksum by adding sequence number, ack number and each char of payload together
     	checkSum = seqNoA + ackNoA;
     	String payload = message.getData();
     	for(char c: payload.toCharArray())
     		checkSum += (int) c;
     	Packet newPack = new Packet(seqNoA, ackNoA, checkSum, payload);
+    	//while the window is not full
+    	if(senderWindow.size() < WindowSize) {
+    		senderWindow.add(newPack);
+    		//sendWindowPackets();
+    		startTimer(0, RxmtInterval);
+    		toLayer3(0, newPack);
+    	}
+    	else {
+    		senderBuffer.add(newPack); //otherwise add to the senderBuffer outside the window
+    	}
     	
-    	startTimer(0, RxmtInterval);
-    	toLayer3(0, newPack);
-    	storedMsg = message;//store the msg in case of resends. Only for stop and wait purpose
+    	seqNoA++;
     }
     
     // This routine will be called whenever a packet sent from the B-side 
@@ -153,15 +161,30 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	int ack = packet.getAcknum();
     	int calculatedCheck = seq + ack;
     	String payload = packet.getPayload();
-    	for(char c: payload.toCharArray())//Is this necessary since the payload received from B is empty?
+    	for(char c: payload.toCharArray())
     		calculatedCheck += (int) c;
-    	//if corrupted or duplicated ack:
-    	if(calculatedCheck != packet.getChecksum() || ack != ackNoA)
-    		aOutput(storedMsg);//resend
+    	if(senderWindow.isEmpty())
+    		return;
+    	//if corrupted, do nothing
+    	if(calculatedCheck != packet.getChecksum()){
+    		
+    	}
+    	//if duplicated(it actually means the ack(seq) is one smaller than the current oldest packet), then retransmit
+    	else if(seq < senderWindow.peek().getSeqnum()) {
+    		toLayer3(0, senderWindow.peek());//retransmit
+    		startTimer(0, RxmtInterval);
+    	}
     	else {
-    		//in this successful case, we change seq and ack
-    		seqNoA++;
-    		ackNoA++;
+    		//When receiving a new ack, remove those acked packs from the window and push packs to the window from senderBuffer if there are any
+    		while(!senderWindow.isEmpty() && senderWindow.peek().getSeqnum() <= seq)
+    			senderWindow.poll();
+    		//push packets from senderBuffer to window if available
+    		while(senderWindow.size() < WindowSize && !senderBuffer.isEmpty()) {
+    			Packet newpck = senderBuffer.poll();
+    			senderWindow.add(newpck);
+    			toLayer3(0, newpck);
+    			startTimer(0, RxmtInterval);
+    		}
     	}
     }
     
@@ -171,9 +194,9 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // for how the timer is started and stopped. 
     protected void aTimerInterrupt()
     {
-    	System.out.println("检查点");
     	stopTimer(0);
-    	aOutput(storedMsg);//resend
+    	toLayer3(0, senderWindow.peek());//resend the oldest one in the window
+    	startTimer(0, RxmtInterval);
     }
     
     // This routine will be called once, before any of your other A-side 
@@ -183,7 +206,9 @@ public class StudentNetworkSimulator extends NetworkSimulator
     protected void aInit()
     {
     	seqNoA = FirstSeqNo;
-    	ackNoA = seqNoA;
+    	ackNoA = 0;
+    	senderBuffer = new LinkedList<Packet>();
+    	senderWindow = new LinkedList<Packet>();
     }
     
     // This routine will be called whenever a packet sent from the B-side 
@@ -199,20 +224,43 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	String payload = packet.getPayload();
     	for(char c: payload.toCharArray())
     		calculatedCheck += (int) c;
-    	//if corrupted or repeated packet:
-    	if(calculatedCheck != packet.getChecksum() || ackNoB == ack) {
-    		toLayer3(1, storedPacketB);
+    	//if corrupted or duplicated, do nothing
+    	if(calculatedCheck != packet.getChecksum()) {
+    		return;
     	}
-    	else {
-    		checkSum = seq + ack;
-    		seqNoB = seq;
-    		ackNoB = ack;
-    		Packet newPack = new Packet(seqNoB, ackNoB, checkSum);
-    		toLayer5(payload);
-    		toLayer3(1, newPack);
-    		storedPacketB = newPack;
+    	//if duplicated, drop and re-ack
+    	else if(receiverBuffer.contains(packet) || seq <= lastSeq){
+    		toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
+    		return;
+    	}
+    	//if new, just put into the buffer, not ack until buffer is in order
+    	else{
+    		receiverBuffer.add(packet);
+    	}
+    	//check whether seq in the priority queue is 1 different from each other(max seq - min seq = size)
+    	//if true, dump everything in pq to layer 5
+    	if(receiverBuffer.peek().getSeqnum() - lastSeq == 1) {
+    		while(!receiverBuffer.isEmpty() && receiverBuffer.peek().getSeqnum() - lastSeq == 1) {
+    			Packet temp = receiverBuffer.poll();
+    			toLayer5(temp.getPayload());
+    			lastSeq = temp.getSeqnum();
+    		}
+    		toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
     	}
     }
+    
+    // packet sequence number comparator that will be used in priority queue on receiver side
+    private class seqComparator implements Comparator<Packet>{
+
+		@Override
+		public int compare(Packet p1, Packet p2) {
+			if(p1.getSeqnum() > p2.getSeqnum())
+				return 1;
+			else if(p1.getSeqnum() < p2.getSeqnum())
+				return -1;
+			return 0;
+		}
+	}
     
     // This routine will be called once, before any of your other B-side 
     // routines are called. It can be used to do any required
@@ -220,9 +268,11 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // of entity B).
     protected void bInit()
     {
-    	storedPacketB = new Packet(FirstSeqNo, FirstSeqNo, FirstSeqNo + FirstSeqNo);
+    	receiverBuffer = new PriorityQueue<Packet>(new seqComparator());
+    	lastSeq = -1;
     }
-
+    
+    
     // Use to print final statistics
     protected void Simulation_done()
     {
