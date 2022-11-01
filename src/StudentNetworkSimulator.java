@@ -102,6 +102,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     private int checkSum;
     private int lastSeq;//last seq received by layer5 on receiver side
     private int expecting;//next expecting seq of B side
+    private boolean NAK;
     //array to track each pack sent time for selective
     private Queue<Packet> senderBuffer;//sender senderBuffer to store out-of-window packets
     private Queue<Packet> senderWindow;//used to keep track of packets in the sender window
@@ -168,7 +169,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // sent from the B-side.
     protected void aInput(Packet packet)
     {
-    	stopTimer(0);
     	totalCommuTime = getTime();
     	//check if checksum is correct
     	int seq = packet.getSeqnum();
@@ -213,6 +213,8 @@ public class StudentNetworkSimulator extends NetworkSimulator
     			startTimer(0, RxmtInterval);
     			originalPackets++;
     		}
+    		if(senderWindow.isEmpty())
+    			stopTimer(0);
     	}
     }
     
@@ -261,7 +263,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	String payload = packet.getPayload();
     	for(char c: payload.toCharArray())
     		calculatedCheck += (int) c;
-    	//if corrupted or duplicated, do nothing
+    	//if corrupted, do nothing
     	if(calculatedCheck != packet.getChecksum()) {
     		corruptedPackets++;
     		return;
@@ -276,9 +278,11 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	else{
     		receiverBuffer.add(0, packet);
     	}
+    	
     	//check whether the buffer is in order
     	//if true, dump every ordered packet to layer 5
     	if(seq == expecting) {
+    		NAK = false;
     		boolean containsExpect = false;
         	do {
         		containsExpect = false;
@@ -296,6 +300,12 @@ public class StudentNetworkSimulator extends NetworkSimulator
         	}while(containsExpect);
         	toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
         	ackB++;
+    	}
+    	else {
+    		if(!NAK) {
+    			toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
+    			NAK = true;
+    		}
     	}
     }
     
@@ -320,6 +330,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	receiverBuffer = new LinkedList<Packet>();
     	expecting = 0;
     	lastSeq = -1;
+    	NAK = false;
     	
     	layer5B = 0;
     	ackB = 0;
