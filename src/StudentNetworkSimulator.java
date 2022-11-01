@@ -101,10 +101,22 @@ public class StudentNetworkSimulator extends NetworkSimulator
     private int ackNoA;
     private int checkSum;
     private int lastSeq;//last seq received by layer5 on receiver side
+    private int expecting;//next expecting seq of B side
     //array to track each pack sent time for selective
     private Queue<Packet> senderBuffer;//sender senderBuffer to store out-of-window packets
     private Queue<Packet> senderWindow;//used to keep track of packets in the sender window
-    private PriorityQueue<Packet> receiverBuffer;//buffer on receiver side
+    //private PriorityQueue<Packet> receiverBuffer;//buffer on receiver side
+    private List<Packet> receiverBuffer;
+    
+    //statistic variables for summary
+    private int originalPackets;
+    private int retransmission;
+    private int layer5B;
+    private int ackB;
+    private int corruptedPackets;
+    private int lostPackets;
+    private double RTT;
+    private double totalCommuTime;
     
     // This is the constructor.  Don't touch!
     public StudentNetworkSimulator(int numMessages,
@@ -128,25 +140,26 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // the receiving upper layer.
     protected void aOutput(Message message)
     {
-    	//create a packet including seq, message, etc and put it into the queue
+    	//Encapsulate packet from msg
     	//calculate checksum by adding sequence number, ack number and each char of payload together
     	checkSum = seqNoA + ackNoA;
     	String payload = message.getData();
     	for(char c: payload.toCharArray())
     		checkSum += (int) c;
     	Packet newPack = new Packet(seqNoA, ackNoA, checkSum, payload);
-    	//while the window is not full
+    	//while the window is not full, send pack to window
     	if(senderWindow.size() < WindowSize) {
     		senderWindow.add(newPack);
-    		//sendWindowPackets();
     		startTimer(0, RxmtInterval);
     		toLayer3(0, newPack);
+    		originalPackets++;
     	}
+    	//otherwise send to buffer
     	else {
-    		senderBuffer.add(newPack); //otherwise add to the senderBuffer outside the window
+    		senderBuffer.add(newPack);
     	}
     	
-    	seqNoA++;
+    	seqNoA = seqNoA == LimitSeqNo - 1 ? 0 : seqNoA + 1;//if reaching seq limit, reset to 0
     }
     
     // This routine will be called whenever a packet sent from the B-side 
@@ -156,6 +169,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     protected void aInput(Packet packet)
     {
     	stopTimer(0);
+    	totalCommuTime = getTime();
     	//check if checksum is correct
     	int seq = packet.getSeqnum();
     	int ack = packet.getAcknum();
@@ -167,23 +181,37 @@ public class StudentNetworkSimulator extends NetworkSimulator
     		return;
     	//if corrupted, do nothing
     	if(calculatedCheck != packet.getChecksum()){
-    		
-    	}
-    	//if duplicated(it actually means the ack(seq) is one smaller than the current oldest packet), then retransmit
-    	else if(seq < senderWindow.peek().getSeqnum()) {
-    		toLayer3(0, senderWindow.peek());//retransmit
-    		startTimer(0, RxmtInterval);
+    		corruptedPackets++;
     	}
     	else {
-    		//When receiving a new ack, remove those acked packs from the window and push packs to the window from senderBuffer if there are any
-    		while(!senderWindow.isEmpty() && senderWindow.peek().getSeqnum() <= seq)
-    			senderWindow.poll();
+    		//check whether ack is within the window
+    		boolean containsSeq = false;
+    		for(Packet p : senderWindow) {
+    			if(p.getSeqnum() == seq)
+    				containsSeq = true;
+    		}
+    		//if ack in window, remove packets till the one next to ack
+    		if(containsSeq) {
+    			int num = -1;
+    			do {
+    				num = senderWindow.poll().getSeqnum();
+    			}
+    			while(num != seq);
+    				
+    		}
+    		//otherwise it means duplicate, retransmit first unacked packet
+    		else {
+    			toLayer3(0, senderWindow.peek());//retransmit
+        		startTimer(0, RxmtInterval);
+        		retransmission++;
+    		}
     		//push packets from senderBuffer to window if available
     		while(senderWindow.size() < WindowSize && !senderBuffer.isEmpty()) {
     			Packet newpck = senderBuffer.poll();
     			senderWindow.add(newpck);
     			toLayer3(0, newpck);
     			startTimer(0, RxmtInterval);
+    			originalPackets++;
     		}
     	}
     }
@@ -197,6 +225,8 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	stopTimer(0);
     	toLayer3(0, senderWindow.peek());//resend the oldest one in the window
     	startTimer(0, RxmtInterval);
+    	retransmission++;
+    	lostPackets++;
     }
     
     // This routine will be called once, before any of your other A-side 
@@ -209,6 +239,13 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	ackNoA = 0;
     	senderBuffer = new LinkedList<Packet>();
     	senderWindow = new LinkedList<Packet>();
+    	
+    	originalPackets = 0;
+    	retransmission = 0;
+    	corruptedPackets = 0;
+    	lostPackets = 0;
+    	RTT = 0.0;
+    	totalCommuTime = 0.0;
     }
     
     // This routine will be called whenever a packet sent from the B-side 
@@ -226,41 +263,52 @@ public class StudentNetworkSimulator extends NetworkSimulator
     		calculatedCheck += (int) c;
     	//if corrupted or duplicated, do nothing
     	if(calculatedCheck != packet.getChecksum()) {
+    		corruptedPackets++;
     		return;
     	}
     	//if duplicated, drop and re-ack
-    	else if(receiverBuffer.contains(packet) || seq <= lastSeq){
+    	else if(!inWindow(seq)){
     		toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
+    		ackB++;
     		return;
     	}
-    	//if new, just put into the buffer, not ack until buffer is in order
+    	//if new, just put into the buffer, but not ack until buffer is in order
     	else{
-    		receiverBuffer.add(packet);
+    		receiverBuffer.add(0, packet);
     	}
-    	//check whether seq in the priority queue is 1 different from each other(max seq - min seq = size)
-    	//if true, dump everything in pq to layer 5
-    	if(receiverBuffer.peek().getSeqnum() - lastSeq == 1) {
-    		while(!receiverBuffer.isEmpty() && receiverBuffer.peek().getSeqnum() - lastSeq == 1) {
-    			Packet temp = receiverBuffer.poll();
-    			toLayer5(temp.getPayload());
-    			lastSeq = temp.getSeqnum();
-    		}
-    		toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
+    	//check whether the buffer is in order
+    	//if true, dump every ordered packet to layer 5
+    	if(seq == expecting) {
+    		boolean containsExpect = false;
+        	do {
+        		containsExpect = false;
+        		for(Packet p : receiverBuffer) {
+            		if(p.getSeqnum() == expecting) {
+            			containsExpect = true;
+            			toLayer5(p.getPayload());
+            			layer5B++;
+            			receiverBuffer.remove(p);
+            			lastSeq = expecting;
+            			expecting = (expecting + 1) % LimitSeqNo;
+            			break;
+            		}
+            	}
+        	}while(containsExpect);
+        	toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
+        	ackB++;
     	}
     }
     
-    // packet sequence number comparator that will be used in priority queue on receiver side
-    private class seqComparator implements Comparator<Packet>{
-
-		@Override
-		public int compare(Packet p1, Packet p2) {
-			if(p1.getSeqnum() > p2.getSeqnum())
-				return 1;
-			else if(p1.getSeqnum() < p2.getSeqnum())
-				return -1;
-			return 0;
-		}
-	}
+    //helper function to check if ack is within receiver's window, if not, it means duplicated ack
+    private boolean inWindow(int a) {
+    	int temp = expecting;
+    	for(int i = 0; i < WindowSize; i++) {
+    		if(a == temp)
+    			return true;
+    		temp = temp == LimitSeqNo - 1? 0 : temp + 1;
+    	}
+    	return false;
+    }
     
     // This routine will be called once, before any of your other B-side 
     // routines are called. It can be used to do any required
@@ -268,25 +316,33 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // of entity B).
     protected void bInit()
     {
-    	receiverBuffer = new PriorityQueue<Packet>(new seqComparator());
+    	//receiverBuffer = new PriorityQueue<Packet>(new seqComparator());
+    	receiverBuffer = new LinkedList<Packet>();
+    	expecting = 0;
     	lastSeq = -1;
+    	
+    	layer5B = 0;
+    	ackB = 0;
     }
     
+    private double getAvgRTT() {
+    	return RTT;
+    }
     
     // Use to print final statistics
     protected void Simulation_done()
     {
     	// TO PRINT THE STATISTICS, FILL IN THE DETAILS BY PUTTING VARIBALE NAMES. DO NOT CHANGE THE FORMAT OF PRINTED OUTPUT
     	System.out.println("\n\n===============STATISTICS=======================");
-    	System.out.println("Number of original packets transmitted by A:" + "<YourVariableHere>");
-    	System.out.println("Number of retransmissions by A:" + "<YourVariableHere>");
-    	System.out.println("Number of data packets delivered to layer 5 at B:" + "<YourVariableHere>");
-    	System.out.println("Number of ACK packets sent by B:" + "<YourVariableHere>");
-    	System.out.println("Number of corrupted packets:" + "<YourVariableHere>");
-    	System.out.println("Ratio of lost packets:" + "<YourVariableHere>" );
-    	System.out.println("Ratio of corrupted packets:" + "<YourVariableHere>");
+    	System.out.println("Number of original packets transmitted by A:" + originalPackets);
+    	System.out.println("Number of retransmissions by A:" + retransmission);
+    	System.out.println("Number of data packets delivered to layer 5 at B:" + layer5B);
+    	System.out.println("Number of ACK packets sent by B:" + ackB);
+    	System.out.println("Number of corrupted packets:" + corruptedPackets);
+    	System.out.println("Ratio of lost packets:" + lostPackets );
+    	System.out.println("Ratio of corrupted packets:" + (double)((double)corruptedPackets / (originalPackets + corruptedPackets + ackB)));
     	System.out.println("Average RTT:" + "<YourVariableHere>");
-    	System.out.println("Average communication time:" + "<YourVariableHere>");
+    	System.out.println("Average communication time:" + totalCommuTime);
     	System.out.println("==================================================");
 
     	// PRINT YOUR OWN STATISTIC HERE TO CHECK THE CORRECTNESS OF YOUR PROGRAM
