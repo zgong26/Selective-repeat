@@ -350,7 +350,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	System.out.println("Number of data packets delivered to layer 5 at B:" + layer5B);
     	System.out.println("Number of ACK packets sent by B:" + ackB);
     	System.out.println("Number of corrupted packets:" + corruptedPackets);
-    	System.out.println("Ratio of lost packets:" + lostPackets );
+    	System.out.println("Ratio of lost packets:" + (double)(retransmission-corruptedPackets) / (double)(originalPackets+retransmission+ackB));
     	System.out.println("Ratio of corrupted packets:" + (double)((double)corruptedPackets / (originalPackets + corruptedPackets + ackB)));
     	System.out.println("Average RTT:" + "<YourVariableHere>");
     	System.out.println("Average communication time:" + totalCommuTime);
