@@ -102,7 +102,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
     private int checkSum;
     private int lastSeq;//last seq received by layer5 on receiver side
     private int expecting;//next expecting seq of B side
-    private boolean NAK;
     //array to track each pack sent time for selective
     private Queue<Packet> senderBuffer;//sender senderBuffer to store out-of-window packets
     private Queue<Packet> senderWindow;//used to keep track of packets in the sender window
@@ -152,6 +151,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	//while the window is not full, send pack to window
     	if(senderWindow.size() < WindowSize) {
     		senderWindow.add(newPack);
+    		stopTimer(0);
     		startTimer(0, RxmtInterval);
     		toLayer3(0, newPack);
     		originalPackets++;
@@ -212,6 +212,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     		else {
     			toLayer3(0, senderWindow.peek());//retransmit
     			packetTime[senderWindow.peek().getSeqnum()] = -1;
+    			stopTimer(0);
         		startTimer(0, RxmtInterval);
         		retransmission++;
     		}
@@ -220,6 +221,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     			Packet newpck = senderBuffer.poll();
     			senderWindow.add(newpck);
     			toLayer3(0, newpck);
+    			stopTimer(0);
     			startTimer(0, RxmtInterval);
     			originalPackets++;
     			packetTime[newpck.getSeqnum()] = getTime();
@@ -235,6 +237,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // for how the timer is started and stopped. 
     protected void aTimerInterrupt()
     {
+    	System.out.println("Timeout!");
     	stopTimer(0);
     	toLayer3(0, senderWindow.peek());//resend the oldest one in the window
     	startTimer(0, RxmtInterval);
@@ -295,7 +298,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	//check whether the buffer is in order
     	//if true, dump every ordered packet to layer 5
     	if(seq == expecting) {
-    		NAK = false;
     		boolean containsExpect = false;
         	do {
         		containsExpect = false;
@@ -315,10 +317,8 @@ public class StudentNetworkSimulator extends NetworkSimulator
         	ackB++;
     	}
     	else {
-    		if(!NAK) {
-    			toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
-    			NAK = true;
-    		}
+    		toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
+			ackB++;
     	}
     }
     
@@ -343,8 +343,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	receiverBuffer = new LinkedList<Packet>();
     	expecting = 0;
     	lastSeq = -1;
-    	NAK = false;
-    	
     	layer5B = 0;
     	ackB = 0;
     }
