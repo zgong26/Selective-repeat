@@ -116,9 +116,9 @@ public class StudentNetworkSimulator extends NetworkSimulator
     private int corruptedPackets;
     private double RTT;
     private double[] packetTime;
+    private double[] commuPacket;
     private int RTTCount;
     private double totalCommuTime;
-    private double partialTimer;
     
     // This is the constructor.  Don't touch!
     public StudentNetworkSimulator(int numMessages,
@@ -142,9 +142,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // the receiving upper layer.
     protected void aOutput(Message message)
     {
-    	if(senderWindow.isEmpty()) {
-    		partialTimer = getTime();//whenever the sender window gets first message, start the partial time to record passing time(used for computing average communication time)
-    	}
     	//Encapsulate packet from msg
     	//calculate checksum by adding sequence number, ack number and each char of payload together
     	checkSum = seqNoA + ackNoA;
@@ -160,6 +157,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     		toLayer3(0, newPack);
     		originalPackets++;
     		packetTime[seqNoA] = getTime();//record the initial time
+    		commuPacket[seqNoA] = getTime();//record the initial time(for total communication time)
     	}
     	//otherwise send to buffer
     	else {
@@ -207,6 +205,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     					RTTCount++;
     				}
     					packetTime[num] = -1;//reset the packet time
+    					totalCommuTime += getTime() - commuPacket[num];//get packet time for total communication time
     			}
     			while(num != seq);
     			
@@ -231,7 +230,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
     		}
     		if(senderWindow.isEmpty()) {
     			stopTimer(0);
-    			totalCommuTime += getTime() - partialTimer;//Whenever the sender window is empty, get the current passing time and add to the total commute time
     		}
     	}
     }
@@ -266,10 +264,11 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	corruptedPackets = 0;
     	RTT = 0.0;
     	RTTCount = 0;
-    	partialTimer = 0.0;//use to track the time during which there are packets in sender window(packets being transmitted)
     	totalCommuTime = 0.0;
     	packetTime = new double[LimitSeqNo];//used to track RTT for each packet
     	Arrays.fill(packetTime, -1);
+    	commuPacket = new double[LimitSeqNo];
+    	Arrays.fill(commuPacket, -1);
     }
     
     // This routine will be called whenever a packet sent from the B-side 
