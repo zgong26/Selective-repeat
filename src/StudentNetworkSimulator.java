@@ -118,6 +118,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     private double[] packetTime;
     private int RTTCount;
     private double totalCommuTime;
+    private double partialTimer;
     
     // This is the constructor.  Don't touch!
     public StudentNetworkSimulator(int numMessages,
@@ -141,6 +142,9 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // the receiving upper layer.
     protected void aOutput(Message message)
     {
+    	if(senderWindow.isEmpty()) {
+    		partialTimer = getTime();//whenever the sender window gets first message, start the partial time to record passing time(used for computing average communication time)
+    	}
     	//Encapsulate packet from msg
     	//calculate checksum by adding sequence number, ack number and each char of payload together
     	checkSum = seqNoA + ackNoA;
@@ -172,7 +176,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
     // sent from the B-side.
     protected void aInput(Packet packet)
     {
-    	totalCommuTime = getTime();
     	//check if checksum is correct
     	int seq = packet.getSeqnum();
     	int ack = packet.getAcknum();
@@ -226,8 +229,10 @@ public class StudentNetworkSimulator extends NetworkSimulator
     			originalPackets++;
     			packetTime[newpck.getSeqnum()] = getTime();
     		}
-    		if(senderWindow.isEmpty())
+    		if(senderWindow.isEmpty()) {
     			stopTimer(0);
+    			totalCommuTime += getTime() - partialTimer;//Whenever the sender window is empty, get the current passing time and add to the total commute time
+    		}
     	}
     }
     
@@ -261,6 +266,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	corruptedPackets = 0;
     	RTT = 0.0;
     	RTTCount = 0;
+    	partialTimer = 0.0;//use to track the time during which there are packets in sender window(packets being transmitted)
     	totalCommuTime = 0.0;
     	packetTime = new double[LimitSeqNo];//used to track RTT for each packet
     	Arrays.fill(packetTime, -1);
@@ -347,10 +353,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	ackB = 0;
     }
     
-    private double getAvgRTT() {
-    	return RTT;
-    }
-    
     // Use to print final statistics
     protected void Simulation_done()
     {
@@ -364,7 +366,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	System.out.println("Ratio of lost packets:" + (double)(retransmission-corruptedPackets) / (double)(originalPackets+retransmission+ackB));
     	System.out.println("Ratio of corrupted packets:" + (double)((double)corruptedPackets / (originalPackets + corruptedPackets + ackB)));
     	System.out.println("Average RTT:" + RTT / RTTCount);
-    	System.out.println("Average communication time:" + totalCommuTime);
+    	System.out.println("Average communication time:" + totalCommuTime / originalPackets);
     	System.out.println("==================================================");
 
     	// PRINT YOUR OWN STATISTIC HERE TO CHECK THE CORRECTNESS OF YOUR PROGRAM
