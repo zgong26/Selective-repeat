@@ -115,8 +115,9 @@ public class StudentNetworkSimulator extends NetworkSimulator
     private int layer5B;
     private int ackB;
     private int corruptedPackets;
-    private int lostPackets;
     private double RTT;
+    private double[] packetTime;
+    private int RTTCount;
     private double totalCommuTime;
     
     // This is the constructor.  Don't touch!
@@ -154,11 +155,13 @@ public class StudentNetworkSimulator extends NetworkSimulator
     		startTimer(0, RxmtInterval);
     		toLayer3(0, newPack);
     		originalPackets++;
+    		packetTime[seqNoA] = getTime();//record the initial time
     	}
     	//otherwise send to buffer
     	else {
     		senderBuffer.add(newPack);
     	}
+    	
     	
     	seqNoA = seqNoA == LimitSeqNo - 1 ? 0 : seqNoA + 1;//if reaching seq limit, reset to 0
     }
@@ -195,13 +198,20 @@ public class StudentNetworkSimulator extends NetworkSimulator
     			int num = -1;
     			do {
     				num = senderWindow.poll().getSeqnum();
+    				//if same, calculate rtt time for this packet
+    				if(num == seq && packetTime[num] != -1) {
+    					RTT += getTime() - packetTime[num];
+    					RTTCount++;
+    				}
+    					packetTime[num] = -1;//reset the packet time
     			}
     			while(num != seq);
-    				
+    			
     		}
     		//otherwise it means duplicate, retransmit first unacked packet
     		else {
     			toLayer3(0, senderWindow.peek());//retransmit
+    			packetTime[senderWindow.peek().getSeqnum()] = -1;
         		startTimer(0, RxmtInterval);
         		retransmission++;
     		}
@@ -212,6 +222,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     			toLayer3(0, newpck);
     			startTimer(0, RxmtInterval);
     			originalPackets++;
+    			packetTime[newpck.getSeqnum()] = getTime();
     		}
     		if(senderWindow.isEmpty())
     			stopTimer(0);
@@ -228,7 +239,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	toLayer3(0, senderWindow.peek());//resend the oldest one in the window
     	startTimer(0, RxmtInterval);
     	retransmission++;
-    	lostPackets++;
+    	packetTime[senderWindow.peek().getSeqnum()] = -1;
     }
     
     // This routine will be called once, before any of your other A-side 
@@ -241,13 +252,15 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	ackNoA = 0;
     	senderBuffer = new LinkedList<Packet>();
     	senderWindow = new LinkedList<Packet>();
-    	
+    	//for statistics: 
     	originalPackets = 0;
     	retransmission = 0;
     	corruptedPackets = 0;
-    	lostPackets = 0;
     	RTT = 0.0;
+    	RTTCount = 0;
     	totalCommuTime = 0.0;
+    	packetTime = new double[LimitSeqNo];//used to track RTT for each packet
+    	Arrays.fill(packetTime, -1);
     }
     
     // This routine will be called whenever a packet sent from the B-side 
@@ -352,7 +365,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     	System.out.println("Number of corrupted packets:" + corruptedPackets);
     	System.out.println("Ratio of lost packets:" + (double)(retransmission-corruptedPackets) / (double)(originalPackets+retransmission+ackB));
     	System.out.println("Ratio of corrupted packets:" + (double)((double)corruptedPackets / (originalPackets + corruptedPackets + ackB)));
-    	System.out.println("Average RTT:" + "<YourVariableHere>");
+    	System.out.println("Average RTT:" + RTT / RTTCount);
     	System.out.println("Average communication time:" + totalCommuTime);
     	System.out.println("==================================================");
 
