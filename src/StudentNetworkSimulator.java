@@ -208,7 +208,6 @@ public class StudentNetworkSimulator extends NetworkSimulator
     					totalCommuTime += getTime() - commuPacket[num];//get packet time for total communication time
     			}
     			while(num != seq);
-    			
     		}
     		//otherwise it means duplicate, retransmit first unacked packet
     		else {
@@ -295,7 +294,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
     		ackB++;
     		return;
     	}
-    	//if new, just put into the buffer, but not ack until buffer is in order
+    	//if new, just put into the buffer
     	else{
     		receiverBuffer.add(0, packet);
     	}
@@ -321,6 +320,7 @@ public class StudentNetworkSimulator extends NetworkSimulator
         	toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
         	ackB++;
     	}
+    	//otherwise ack last received packet sequence
     	else {
     		toLayer3(1, new Packet(lastSeq, 1, lastSeq + 1));
 			ackB++;
